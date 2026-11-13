@@ -42,3 +42,13 @@ Kotlin, Jetpack Compose, Media3 (ExoPlayer + MediaSession), OkHttp. Das Passwort
 
 Selbst bauen: Projekt in Android Studio öffnen und auf „Run“ klicken, oder mit installiertem
 Android SDK `gradle assembleDebug` (Gradle 8.9, JDK 17).
+
+## Android Auto
+
+Die App ist eine Medien-App für Android Auto: Im Fahrzeug-Display erscheinen „Weiterspielen“ (gespeicherte
+Warteschlange) und „Musik“ (Ordner und Titel des WebDAV-Servers, mit Cover soweit bereits geladen). Ein Tipp auf
+einen Titel startet ihn mit dem Ordner als Warteschlange. Vorladen und Cache laufen unverändert.
+
+Da die APK nicht aus dem Play Store stammt, muss in der Android-Auto-App auf dem Handy der Entwicklermodus
+aktiviert werden (Einstellungen → mehrmals auf „Version“ tippen) und dort „Unbekannte Quellen“ eingeschaltet
+sein. Die genauen Schritte können je nach Android-Auto-Version abweichen.

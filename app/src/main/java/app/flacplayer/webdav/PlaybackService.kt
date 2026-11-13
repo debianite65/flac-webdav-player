@@ -11,19 +11,34 @@ import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.DefaultMediaNotificationProvider
+import androidx.media3.session.LibraryResult
+import androidx.media3.session.MediaLibraryService
+import androidx.media3.session.MediaLibraryService.LibraryParams
+import androidx.media3.session.MediaLibraryService.MediaLibrarySession
 import androidx.media3.session.MediaSession
-import androidx.media3.session.MediaSessionService
+import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.guava.future
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /**
  * Hintergrund-Wiedergabe (Media3). Streamt FLAC über WebDAV, schreibt alles in den
  * gemeinsamen Cache und lässt den [Preloader] die nächsten 15 Titel vorladen.
+ *
+ * Als MediaLibraryService bietet der Dienst zusätzlich einen Browse-Baum an, den
+ * Android Auto im Fahrzeug-Display anzeigt (siehe [AutoBrowse]).
  */
-class PlaybackService : MediaSessionService() {
+class PlaybackService : MediaLibraryService() {
 
-    private var session: MediaSession? = null
+    private var session: MediaLibrarySession? = null
     private var preloader: Preloader? = null
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     override fun onCreate() {
         super.onCreate()
@@ -54,8 +69,7 @@ class PlaybackService : MediaSessionService() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
 
-        session = MediaSession.Builder(this, player)
-            .setCallback(SessionCallback())
+        session = MediaLibrarySession.Builder(this, player, LibraryCallback())
             .setSessionActivity(openApp)
             .build()
 
@@ -98,7 +112,7 @@ class PlaybackService : MediaSessionService() {
         preloader = Preloader(this, player, dataSourceFactory).also { it.start() }
     }
 
-    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
+    override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? = session
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         val player = session?.player
@@ -110,6 +124,7 @@ class PlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         session?.player?.let { QueueStore.save(it) }
+        scope.cancel()
         preloader?.release()
         preloader = null
         session?.run {
@@ -120,15 +135,136 @@ class PlaybackService : MediaSessionService() {
         super.onDestroy()
     }
 
-    private class SessionCallback : MediaSession.Callback {
-        /** Der Controller schickt Items mit mediaId = URL; hier wird daraus die abspielbare URI. */
+    /** Wandelt Ids aus dem Browse-Baum bzw. aus der Handy-App in abspielbare Items (mediaId = URL). */
+    private fun resolve(item: MediaItem): MediaItem {
+        val url = item.mediaId.removePrefix(AutoBrowse.TRACK)
+        return item.buildUpon().setMediaId(url).setUri(url).build()
+    }
+
+    private inner class LibraryCallback : MediaLibrarySession.Callback {
+
+        override fun onGetLibraryRoot(
+            session: MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            params: LibraryParams?,
+        ): ListenableFuture<LibraryResult<MediaItem>> =
+            Futures.immediateFuture(LibraryResult.ofItem(AutoBrowse.rootItem(), params))
+
+        override fun onGetChildren(
+            session: MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            parentId: String,
+            page: Int,
+            pageSize: Int,
+            params: LibraryParams?,
+        ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> =
+            scope.future<LibraryResult<ImmutableList<MediaItem>>> {
+                try {
+                    val p = session.player
+                    val kids = AutoBrowse.children(
+                        parentId,
+                        p.mediaItemCount > 0,
+                        p.currentMediaItem?.mediaMetadata?.title?.toString(),
+                    )
+                    if (kids == null) {
+                        LibraryResult.ofError(LibraryResult.RESULT_ERROR_BAD_VALUE)
+                    } else {
+                        val from = minOf(kids.size.toLong(), page.toLong() * pageSize.coerceAtLeast(0)).toInt()
+                        val to = if (pageSize > 0) {
+                            minOf(kids.size.toLong(), from.toLong() + pageSize).toInt()
+                        } else {
+                            kids.size
+                        }
+                        LibraryResult.ofItemList(ImmutableList.copyOf(kids.subList(from, to)), params)
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    LibraryResult.ofError(LibraryResult.RESULT_ERROR_IO)
+                }
+            }
+
+        override fun onGetItem(
+            session: MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            mediaId: String,
+        ): ListenableFuture<LibraryResult<MediaItem>> =
+            scope.future<LibraryResult<MediaItem>> {
+                fun lastSegment(url: String, fallback: String) =
+                    url.toHttpUrlOrNull()?.pathSegments?.lastOrNull { it.isNotEmpty() } ?: fallback
+
+                val item: MediaItem? = when {
+                    mediaId == AutoBrowse.ROOT -> AutoBrowse.rootItem()
+                    mediaId == AutoBrowse.RESUME ->
+                        AutoBrowse.resumeItem(session.player.currentMediaItem?.mediaMetadata?.title?.toString())
+                    mediaId.startsWith(AutoBrowse.DIR) -> {
+                        val url = mediaId.removePrefix(AutoBrowse.DIR)
+                        AutoBrowse.folderItem(url, lastSegment(url, "Musik"))
+                    }
+                    mediaId.startsWith(AutoBrowse.TRACK) -> {
+                        val url = mediaId.removePrefix(AutoBrowse.TRACK)
+                        AutoBrowse.browseTrackItem(
+                            DavEntry(url, lastSegment(url, url), false, -1L),
+                            Library.cachedMeta(url),
+                            null,
+                        )
+                    }
+                    else -> null
+                }
+                if (item != null) {
+                    LibraryResult.ofItem(item, null)
+                } else {
+                    LibraryResult.ofError(LibraryResult.RESULT_ERROR_BAD_VALUE)
+                }
+            }
+
         override fun onAddMediaItems(
             mediaSession: MediaSession,
             controller: MediaSession.ControllerInfo,
             mediaItems: MutableList<MediaItem>,
-        ): ListenableFuture<MutableList<MediaItem>> {
-            val resolved = mediaItems.map { it.buildUpon().setUri(it.mediaId).build() }.toMutableList()
-            return Futures.immediateFuture(resolved)
-        }
+        ): ListenableFuture<MutableList<MediaItem>> =
+            Futures.immediateFuture(mediaItems.map { resolve(it) }.toMutableList())
+
+        /**
+         * Android Auto schickt beim Antippen einen einzelnen Browse-Eintrag. Daraus wird hier die
+         * Warteschlange (alle FLAC-Dateien des Ordners, Start beim Titel) bzw. "Weiterspielen".
+         * Die Handy-App schickt ihre Warteschlange fertig mit URLs; sie läuft über den Standardpfad.
+         */
+        override fun onSetMediaItems(
+            mediaSession: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            mediaItems: MutableList<MediaItem>,
+            startIndex: Int,
+            startPositionMs: Long,
+        ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> =
+            scope.future<MediaSession.MediaItemsWithStartPosition> {
+                val id = if (mediaItems.size == 1) mediaItems[0].mediaId else ""
+                when {
+                    id == AutoBrowse.RESUME -> {
+                        val p = mediaSession.player
+                        if (p.mediaItemCount == 0) throw IllegalStateException("Keine gespeicherte Warteschlange")
+                        MediaSession.MediaItemsWithStartPosition(
+                            List(p.mediaItemCount) { p.getMediaItemAt(it) },
+                            p.currentMediaItemIndex,
+                            p.currentPosition,
+                        )
+                    }
+                    id.startsWith(AutoBrowse.TRACK) -> {
+                        val (items, index) = AutoBrowse.queueForTrack(id.removePrefix(AutoBrowse.TRACK))
+                        if (items.isEmpty()) throw IllegalStateException("Keine FLAC-Dateien gefunden")
+                        MediaSession.MediaItemsWithStartPosition(items, index, C.TIME_UNSET)
+                    }
+                    id.startsWith(AutoBrowse.DIR) -> {
+                        val items = AutoBrowse.queueForFolder(id.removePrefix(AutoBrowse.DIR))
+                        if (items.isEmpty()) throw IllegalStateException("Keine FLAC-Dateien gefunden")
+                        MediaSession.MediaItemsWithStartPosition(items, 0, C.TIME_UNSET)
+                    }
+                    else -> MediaSession.MediaItemsWithStartPosition(
+                        mediaItems.map { resolve(it) },
+                        startIndex,
+                        startPositionMs,
+                    )
+                }
+            }
     }
 }

@@ -82,6 +82,23 @@ object Library {
         }
     }
 
+    /** Kleines JPEG-Vorschaubild (für Android-Auto-Listen) aus dem bereits vorhandenen Cover, sonst null. */
+    fun thumbnailBytes(trackUrl: String, maxPx: Int = 128): ByteArray? {
+        val meta = cachedMeta(trackUrl) ?: return null
+        if (!meta.hasCover) return null
+        val file = coverFile(trackUrl)
+        if (!file.exists()) return null
+        var bmp = decodeFile(file, maxPx) ?: return null
+        val longest = maxOf(bmp.width, bmp.height)
+        if (longest > maxPx) {
+            val f = maxPx.toFloat() / longest
+            bmp = Bitmap.createScaledBitmap(bmp, (bmp.width * f).toInt().coerceAtLeast(1), (bmp.height * f).toInt().coerceAtLeast(1), true)
+        }
+        val out = java.io.ByteArrayOutputStream()
+        bmp.compress(Bitmap.CompressFormat.JPEG, 80, out)
+        return out.toByteArray()
+    }
+
     private fun decodeFile(file: File, maxPx: Int): Bitmap? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.path, bounds)
