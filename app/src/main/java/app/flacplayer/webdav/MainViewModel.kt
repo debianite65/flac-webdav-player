@@ -380,6 +380,13 @@ class MainViewModel(private val app: Application) : AndroidViewModel(app) {
 
     /** "Zuletzt gespielt": Ordner öffnen und den Titel dort starten. */
     fun resumeLast() {
+        // Ist die Warteschlange (wiederhergestellt oder laufend) vorhanden, einfach dort weiterspielen,
+        // statt sie durch den letzten Ordner zu ersetzen.
+        if (player.hasItem) {
+            controller?.play()
+            screen = Screen.Player
+            return
+        }
         val folder = settings.lastFolder
         val track = settings.lastTrackUrl
         if (folder.isEmpty() || track.isEmpty()) return

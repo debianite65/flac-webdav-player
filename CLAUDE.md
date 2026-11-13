@@ -17,5 +17,6 @@ Entscheidungen aus der Planung (13.11.2026):
   GitHub Actions. Version 1 wurde vom Nutzer auf dem Gerät als funktionierend bestätigt.
 - Warteschlange (nachgerüstet): Menü "Als Nächstes"/"Ans Ende" für Titel und Ordner (ohne Unterordner),
   Queue-Screen mit Springen, Entfernen, Verschieben per Ziehen, Leeren.
+- Warteschlange bleibt dauerhaft erhalten (`QueueStore.kt`, JSON in filesDir, Restore pausiert beim Dienststart).
 - Bewusst nicht umgesetzt: Suche, Playlists, Favoriten, Equalizer, Sleep-Timer, Android Auto, Chromecast,
   Offline-Download ganzer Alben, Unterordner in Warteschlange/Abspielen.

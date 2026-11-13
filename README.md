@@ -33,6 +33,7 @@ Die APK ist mit einem festen Debug-Schlüssel signiert (`app/debug.keystore`), U
 - Warteschlange: Über das Drei-Punkte-Menü bei Titeln und Ordnern „Als Nächstes spielen“ bzw. „Ans Ende“
   (bei Ordnern alle FLAC-Dateien darin, ohne Unterordner). Im Player zeigt das Symbol oben rechts die
   Warteschlange: antippen springt zum Titel, X entfernt, am Griff ziehen verschiebt, Papierkorb leert.
+  Die Warteschlange (alle Alben, aktueller Titel, Position, Shuffle/Repeat) bleibt nach dem Schließen der App erhalten.
 
 ## Technik
 

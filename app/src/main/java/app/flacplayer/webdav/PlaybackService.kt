@@ -65,6 +65,25 @@ class PlaybackService : MediaSessionService() {
             },
         )
 
+        // Gespeicherte Warteschlange wiederherstellen (pausiert), bevor Listener hängen.
+        QueueStore.restore(player)
+
+        // Warteschlange bei jeder Änderung speichern.
+        player.addListener(object : Player.Listener {
+            override fun onEvents(player: Player, events: Player.Events) {
+                if (events.containsAny(
+                        Player.EVENT_TIMELINE_CHANGED,
+                        Player.EVENT_MEDIA_ITEM_TRANSITION,
+                        Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED,
+                        Player.EVENT_REPEAT_MODE_CHANGED,
+                        Player.EVENT_IS_PLAYING_CHANGED,
+                    )
+                ) {
+                    QueueStore.save(player)
+                }
+            }
+        })
+
         // "Zuletzt gespielt" merken
         player.addListener(object : Player.Listener {
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -83,12 +102,14 @@ class PlaybackService : MediaSessionService() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         val player = session?.player
+        if (player != null) QueueStore.save(player)
         if (player == null || !player.playWhenReady || player.mediaItemCount == 0) {
             stopSelf()
         }
     }
 
     override fun onDestroy() {
+        session?.player?.let { QueueStore.save(it) }
         preloader?.release()
         preloader = null
         session?.run {
