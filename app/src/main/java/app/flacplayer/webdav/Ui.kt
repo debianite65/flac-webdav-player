@@ -18,20 +18,30 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.PlaylistAdd
+import androidx.compose.material.icons.filled.PlaylistPlay
+import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
@@ -42,6 +52,8 @@ import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -71,6 +83,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.input.KeyboardType
@@ -80,6 +96,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.Player
+import kotlin.math.roundToInt
 
 @Composable
 fun AppRoot(vm: MainViewModel) {
@@ -87,6 +104,7 @@ fun AppRoot(vm: MainViewModel) {
     when (vm.screen) {
         Screen.Browser -> BrowserScreen(vm)
         Screen.Player -> PlayerScreen(vm)
+        Screen.Queue -> QueueScreen(vm)
         Screen.Settings -> SettingsScreen(vm)
     }
 }
@@ -240,6 +258,14 @@ private fun FolderRow(entry: DavEntry, vm: MainViewModel) {
                 modifier = Modifier.size(40.dp),
             )
         },
+        trailingContent = {
+            QueueMenu(
+                nextLabel = "Alle Titel als Nächstes spielen",
+                endLabel = "Alle Titel ans Ende der Warteschlange",
+                onNext = { vm.enqueueFolder(entry, next = true) },
+                onEnd = { vm.enqueueFolder(entry, next = false) },
+            )
+        },
         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
         modifier = Modifier.clickable { vm.open(entry.url) },
     )
@@ -267,14 +293,50 @@ private fun TrackRow(entry: DavEntry, vm: MainViewModel) {
         leadingContent = {
             CoverImage(entry.url, m?.hasCover == true, Modifier.size(48.dp))
         },
-        trailingContent = if (isCurrent) {
-            { Icon(Icons.Filled.GraphicEq, contentDescription = "Läuft", tint = MaterialTheme.colorScheme.primary) }
-        } else {
-            null
+        trailingContent = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (isCurrent) {
+                    Icon(Icons.Filled.GraphicEq, contentDescription = "Läuft", tint = MaterialTheme.colorScheme.primary)
+                }
+                QueueMenu(
+                    nextLabel = "Als Nächstes spielen",
+                    endLabel = "Ans Ende der Warteschlange",
+                    onNext = { vm.enqueueTrack(entry, next = true) },
+                    onEnd = { vm.enqueueTrack(entry, next = false) },
+                )
+            }
         },
         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
         modifier = Modifier.clickable { vm.play(entry) },
     )
+}
+
+@Composable
+private fun QueueMenu(nextLabel: String, endLabel: String, onNext: () -> Unit, onEnd: () -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }) {
+            Icon(Icons.Filled.MoreVert, contentDescription = "Mehr")
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(
+                text = { Text(nextLabel) },
+                leadingIcon = { Icon(Icons.Filled.PlaylistPlay, contentDescription = null) },
+                onClick = {
+                    open = false
+                    onNext()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text(endLabel) },
+                leadingIcon = { Icon(Icons.Filled.PlaylistAdd, contentDescription = null) },
+                onClick = {
+                    open = false
+                    onEnd()
+                },
+            )
+        }
+    }
 }
 
 @Composable
@@ -350,6 +412,14 @@ fun PlayerScreen(vm: MainViewModel) {
                 Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Schließen", modifier = Modifier.size(32.dp))
             }
             Spacer(Modifier.weight(1f))
+            IconButton(onClick = { vm.screen = Screen.Queue }) {
+                Icon(
+                    Icons.Filled.QueueMusic,
+                    contentDescription = "Warteschlange",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(28.dp),
+                )
+            }
         }
         Spacer(Modifier.height(8.dp))
         CoverImage(
@@ -433,6 +503,126 @@ fun PlayerScreen(vm: MainViewModel) {
                 )
             }
         }
+    }
+}
+
+// ============================================================================ Warteschlange
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun QueueScreen(vm: MainViewModel) {
+    val rowHeight = 64.dp
+    val rowPx = with(LocalDensity.current) { rowHeight.toPx() }
+    val listState = rememberLazyListState(
+        initialFirstVisibleItemIndex = (vm.queueIndex - 2).coerceAtLeast(0),
+    )
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = {
+            TopAppBar(
+                title = { Text("Warteschlange (${vm.queue.size})") },
+                navigationIcon = {
+                    IconButton(onClick = { vm.screen = Screen.Player }) {
+                        Icon(Icons.Filled.ArrowBack, contentDescription = "Zurück")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { vm.clearQueue() }) {
+                        Icon(Icons.Filled.DeleteSweep, contentDescription = "Warteschlange leeren")
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                    titleContentColor = MaterialTheme.colorScheme.onBackground,
+                    actionIconContentColor = MaterialTheme.colorScheme.primary,
+                    navigationIconContentColor = MaterialTheme.colorScheme.primary,
+                ),
+            )
+        },
+    ) { inner ->
+        LazyColumn(Modifier.padding(inner).fillMaxSize(), state = listState) {
+            itemsIndexed(vm.queue, key = { index, q -> "$index:${q.mediaId}" }) { index, q ->
+                QueueRow(index, q, index == vm.queueIndex, rowHeight, rowPx, vm)
+            }
+        }
+    }
+}
+
+@Composable
+private fun QueueRow(
+    index: Int,
+    item: QueueItemUi,
+    isCurrent: Boolean,
+    rowHeight: Dp,
+    rowPx: Float,
+    vm: MainViewModel,
+) {
+    var dragY by remember { mutableFloatStateOf(0f) }
+    var dragging by remember { mutableStateOf(false) }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(rowHeight)
+            .zIndex(if (dragging) 1f else 0f)
+            .graphicsLayer { translationY = dragY }
+            .background(if (dragging) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent)
+            .clickable { vm.jumpTo(index) }
+            .padding(start = 16.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CoverImage(item.mediaId, item.hasCover, Modifier.size(44.dp))
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                item.title.ifEmpty { item.mediaId.substringAfterLast('/').substringBeforeLast('.') },
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                color = if (isCurrent) MaterialTheme.colorScheme.primary else Color.Unspecified,
+            )
+            if (item.artist.isNotEmpty()) {
+                Text(
+                    item.artist,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        if (isCurrent) {
+            Icon(Icons.Filled.GraphicEq, contentDescription = "Läuft", tint = MaterialTheme.colorScheme.primary)
+        }
+        IconButton(onClick = { vm.removeFromQueue(index) }) {
+            Icon(Icons.Filled.Close, contentDescription = "Entfernen")
+        }
+        Icon(
+            Icons.Filled.DragHandle,
+            contentDescription = "Verschieben",
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .size(44.dp)
+                .padding(10.dp)
+                .pointerInput(index) {
+                    detectDragGestures(
+                        onDragStart = { dragging = true },
+                        onDragEnd = {
+                            val target = (index + (dragY / rowPx).roundToInt())
+                                .coerceIn(0, (vm.queue.size - 1).coerceAtLeast(0))
+                            dragging = false
+                            dragY = 0f
+                            vm.moveInQueue(index, target)
+                        },
+                        onDragCancel = {
+                            dragging = false
+                            dragY = 0f
+                        },
+                        onDrag = { change, amount ->
+                            change.consume()
+                            dragY += amount.y
+                        },
+                    )
+                },
+        )
     }
 }
 

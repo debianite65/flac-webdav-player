@@ -3,6 +3,7 @@ package app.flacplayer.webdav
 import android.app.Application
 import android.content.ComponentName
 import android.net.Uri
+import android.widget.Toast
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -29,7 +30,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
-enum class Screen { Browser, Player, Settings }
+enum class Screen { Browser, Player, Queue, Settings }
+
+data class QueueItemUi(
+    val mediaId: String,
+    val title: String,
+    val artist: String,
+    val hasCover: Boolean,
+)
 
 data class PlayerUi(
     val hasItem: Boolean = false,
@@ -63,6 +71,11 @@ class MainViewModel(private val app: Application) : AndroidViewModel(app) {
     var player by mutableStateOf(PlayerUi())
         private set
     var lastTitle by mutableStateOf(settings.lastTrackTitle)
+        private set
+
+    var queue by mutableStateOf<List<QueueItemUi>>(emptyList())
+        private set
+    var queueIndex by mutableStateOf(-1)
         private set
 
     var settingsBusy by mutableStateOf(false)
@@ -105,7 +118,9 @@ class MainViewModel(private val app: Application) : AndroidViewModel(app) {
     }
 
     fun back() {
-        if (screen != Screen.Browser) {
+        if (screen == Screen.Queue) {
+            screen = Screen.Player
+        } else if (screen != Screen.Browser) {
             screen = Screen.Browser
         } else {
             up()
@@ -238,8 +253,10 @@ class MainViewModel(private val app: Application) : AndroidViewModel(app) {
         c.play()
     }
 
-    private fun buildItem(entry: DavEntry): MediaItem {
-        val m = meta[entry.url] ?: Library.cachedMeta(entry.url)
+    private fun buildItem(
+        entry: DavEntry,
+        m: TrackMeta? = meta[entry.url] ?: Library.cachedMeta(entry.url),
+    ): MediaItem {
         val artwork = if (m?.hasCover == true && Library.coverFile(entry.url).exists()) {
             Uri.fromFile(Library.coverFile(entry.url))
         } else {
@@ -256,6 +273,109 @@ class MainViewModel(private val app: Application) : AndroidViewModel(app) {
             .setUri(entry.url)
             .setMediaMetadata(metadata)
             .build()
+    }
+
+    // ------------------------------------------------------------------ Warteschlange
+
+    private fun toast(text: String) {
+        Toast.makeText(app, text, Toast.LENGTH_SHORT).show()
+    }
+
+    /** Fügt einen einzelnen Titel hinzu: direkt nach dem aktuellen ([next]) oder ans Ende. */
+    fun enqueueTrack(entry: DavEntry, next: Boolean) {
+        addItems(listOf(buildItem(entry)), next, entry.name.substringBeforeLast('.'))
+    }
+
+    /** Fügt alle FLAC-Dateien eines Ordners (ohne Unterordner) in Track-Reihenfolge hinzu. */
+    fun enqueueFolder(folder: DavEntry, next: Boolean) {
+        viewModelScope.launch {
+            try {
+                toast("Ordner wird gelesen …")
+                val list = WebDav.list(folder.url)
+                val tracks = list.filter { it.isFlac }
+                if (tracks.isEmpty()) {
+                    toast("Keine FLAC-Dateien in diesem Ordner")
+                    return@launch
+                }
+                val cover = list.filter { it.isCoverImage }.minByOrNull { coverPriority(it.name) }?.url
+                val withMeta = coroutineScope {
+                    tracks.map { t -> async { t to Library.loadMeta(t.url, cover) } }.awaitAll()
+                }
+                val sorted = withMeta.sortedWith(
+                    compareBy<Pair<DavEntry, TrackMeta>>(
+                        { it.second.disc ?: 0 },
+                        { it.second.track ?: Int.MAX_VALUE },
+                    ).thenComparator { a, b -> naturalCompare(a.first.name, b.first.name) },
+                )
+                addItems(sorted.map { buildItem(it.first, it.second) }, next, folder.name)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                toast("Hinzufügen fehlgeschlagen: ${e.message ?: e.javaClass.simpleName}")
+            }
+        }
+    }
+
+    private fun addItems(items: List<MediaItem>, next: Boolean, label: String) {
+        val c = controller ?: return
+        if (items.isEmpty()) return
+        if (c.mediaItemCount == 0) {
+            c.setMediaItems(items)
+            c.prepare()
+            c.play()
+            toast("${items.size} Titel: Wiedergabe gestartet")
+            return
+        }
+        if (next) {
+            c.addMediaItems(c.currentMediaItemIndex + 1, items)
+        } else {
+            c.addMediaItems(items)
+        }
+        val where = if (next) "als Nächstes" else "ans Ende"
+        toast(if (items.size == 1) "„$label“ $where hinzugefügt" else "${items.size} Titel $where hinzugefügt")
+    }
+
+    fun jumpTo(index: Int) {
+        val c = controller ?: return
+        if (index !in 0 until c.mediaItemCount) return
+        c.seekTo(index, 0L)
+        c.play()
+    }
+
+    fun removeFromQueue(index: Int) {
+        val c = controller ?: return
+        if (index !in 0 until c.mediaItemCount) return
+        c.removeMediaItem(index)
+    }
+
+    fun moveInQueue(from: Int, to: Int) {
+        val c = controller ?: return
+        val count = c.mediaItemCount
+        if (from !in 0 until count || to !in 0 until count || from == to) return
+        c.moveMediaItem(from, to)
+    }
+
+    fun clearQueue() {
+        controller?.let {
+            it.stop()
+            it.clearMediaItems()
+        }
+        screen = Screen.Browser
+    }
+
+    private fun syncQueue() {
+        val c = controller ?: return
+        queue = List(c.mediaItemCount) { i ->
+            val item = c.getMediaItemAt(i)
+            QueueItemUi(
+                mediaId = item.mediaId,
+                title = item.mediaMetadata.title?.toString().orEmpty(),
+                artist = item.mediaMetadata.artist?.toString().orEmpty(),
+                hasCover = Library.cachedMeta(item.mediaId)?.hasCover == true,
+            )
+        }
+        queueIndex = c.currentMediaItemIndex
+        if (queue.isEmpty() && screen == Screen.Queue) screen = Screen.Browser
     }
 
     /** "Zuletzt gespielt": Ordner öffnen und den Titel dort starten. */
@@ -311,9 +431,15 @@ class MainViewModel(private val app: Application) : AndroidViewModel(app) {
                 val c = MediaController.Builder(app, token).buildAsync().await()
                 controller = c
                 c.addListener(object : Player.Listener {
-                    override fun onEvents(player: Player, events: Player.Events) = syncPlayer()
+                    override fun onEvents(player: Player, events: Player.Events) {
+                        syncPlayer()
+                        if (events.containsAny(Player.EVENT_TIMELINE_CHANGED, Player.EVENT_MEDIA_ITEM_TRANSITION)) {
+                            syncQueue()
+                        }
+                    }
                 })
                 syncPlayer()
+                syncQueue()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -328,6 +454,7 @@ class MainViewModel(private val app: Application) : AndroidViewModel(app) {
         val md = item?.mediaMetadata
         val title = md?.title?.toString().orEmpty()
         if (item != null && title.isNotEmpty()) lastTitle = title
+        if (item == null && (screen == Screen.Player || screen == Screen.Queue)) screen = Screen.Browser
         player = PlayerUi(
             hasItem = item != null,
             isPlaying = c.playWhenReady &&

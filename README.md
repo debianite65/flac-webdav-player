@@ -30,6 +30,9 @@ Die APK ist mit einem festen Debug-Schlüssel signiert (`app/debug.keystore`), U
   Audio-Cache (LRU, Obergrenze einstellbar) und laufen auch offline. Optional nur im WLAN.
 - Hintergrundwiedergabe mit Benachrichtigung, Lockscreen- und Bluetooth-Steuerung.
 - Shuffle, Repeat, Seekbar, „Zuletzt gespielt“.
+- Warteschlange: Über das Drei-Punkte-Menü bei Titeln und Ordnern „Als Nächstes spielen“ bzw. „Ans Ende“
+  (bei Ordnern alle FLAC-Dateien darin, ohne Unterordner). Im Player zeigt das Symbol oben rechts die
+  Warteschlange: antippen springt zum Titel, X entfernt, am Griff ziehen verschiebt, Papierkorb leert.
 
 ## Technik
 

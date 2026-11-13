@@ -13,7 +13,9 @@ Entscheidungen aus der Planung (13.11.2026):
   Schalter „nur WLAN“ vorhanden. Cache-Obergrenze einstellbar, wirkt nach App-Neustart.
 - Kein Gradle-Wrapper im Repo: GitHub Actions nutzt `gradle/actions/setup-gradle` mit Gradle 8.9.
   Android Studio erzeugt den Wrapper beim Öffnen selbst.
-- Stand: Code wurde ohne Compiler/Gerät geschrieben (Arbeitsbereich ohne Zugriff auf Android SDK).
-  Der erste GitHub-Actions-Lauf zeigt eventuelle Kompilierfehler.
-- Bewusst nicht in v1: Suche, Playlists, Favoriten, Equalizer, Sleep-Timer, Android Auto, Chromecast,
-  Offline-Download ganzer Alben, rekursives Abspielen von Unterordnern.
+- Stand: Code wird ohne lokalen Compiler geschrieben (Arbeitsbereich ohne Android SDK); kompiliert wird in
+  GitHub Actions. Version 1 wurde vom Nutzer auf dem Gerät als funktionierend bestätigt.
+- Warteschlange (nachgerüstet): Menü "Als Nächstes"/"Ans Ende" für Titel und Ordner (ohne Unterordner),
+  Queue-Screen mit Springen, Entfernen, Verschieben per Ziehen, Leeren.
+- Bewusst nicht umgesetzt: Suche, Playlists, Favoriten, Equalizer, Sleep-Timer, Android Auto, Chromecast,
+  Offline-Download ganzer Alben, Unterordner in Warteschlange/Abspielen.
