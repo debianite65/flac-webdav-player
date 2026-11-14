@@ -5,6 +5,7 @@ import android.content.Intent
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
@@ -25,6 +26,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.guava.future
+import kotlinx.coroutines.launch
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /**
@@ -106,10 +108,39 @@ class PlaybackService : MediaLibraryService() {
                 settings.lastTrackUrl = item.mediaId
                 settings.lastFolder = item.mediaId.substringBeforeLast('/') + "/"
                 settings.lastTrackTitle = item.mediaMetadata.title?.toString().orEmpty()
+                enrichCurrent(player)
             }
         })
 
         preloader = Preloader(this, player, dataSourceFactory).also { it.start() }
+        enrichCurrent(player)
+    }
+
+    /**
+     * Android Auto kann Dateipfade vom Handy nicht lesen. Deshalb bekommt der aktuelle Titel sein Cover
+     * als Bilddaten (artworkData) mit. Fehlt das Cover noch, wird es hier nachgeladen. Das Ersetzen des
+     * MediaItems ändert nur die Metadaten; die Wiedergabe läuft unterbrechungsfrei weiter.
+     */
+    private fun enrichCurrent(player: Player) {
+        val item = player.currentMediaItem ?: return
+        if (item.mediaMetadata.artworkData != null) return
+        val url = item.mediaId
+        scope.launch {
+            val bytes = try {
+                AutoBrowse.coverBytesFor(url)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                null
+            } ?: return@launch
+            val current = player.currentMediaItem ?: return@launch
+            if (current.mediaId != url || current.mediaMetadata.artworkData != null) return@launch
+            val index = player.currentMediaItemIndex
+            val metadata = current.mediaMetadata.buildUpon()
+                .setArtworkData(bytes, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
+                .build()
+            player.replaceMediaItem(index, current.buildUpon().setMediaMetadata(metadata).build())
+        }
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? = session

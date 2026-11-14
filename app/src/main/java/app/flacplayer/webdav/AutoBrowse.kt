@@ -5,6 +5,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Browse-Baum für Android Auto (und andere Media-Browser):
@@ -23,6 +24,10 @@ object AutoBrowse {
     const val TRACK = "t:"
 
     private const val MAX_THUMBS = 30
+
+    /** Größe der Cover-Bilder für Android Auto (Bitmaps über Binder müssen klein bleiben). */
+    const val ART_PX = 320
+    private const val LIST_THUMB_PX = 128
 
     fun rootItem(): MediaItem = MediaItem.Builder()
         .setMediaId(ROOT)
@@ -101,8 +106,21 @@ object AutoBrowse {
             .build()
     }
 
+    class FolderListing(val dirs: List<DavEntry>, val tracks: List<DavEntry>, val coverUrl: String?)
+
+    /** Bild im Ordner (cover.jpg o. ä.), das als Ersatz für fehlende eingebettete Cover dient. */
+    fun pickCover(list: List<DavEntry>): String? =
+        list.filter { it.isCoverImage }.minByOrNull {
+            when (it.name.lowercase().substringBeforeLast('.')) {
+                "cover" -> 0
+                "folder" -> 1
+                "front" -> 2
+                else -> 3
+            }
+        }?.url
+
     /** Ordner lesen: Unterordner und sortierte FLAC-Titel (Sortierung nach Tags, soweit bekannt). */
-    suspend fun listFolder(folderUrl: String): Pair<List<DavEntry>, List<DavEntry>> {
+    suspend fun listFolder(folderUrl: String): FolderListing {
         val list = WebDav.list(folderUrl)
         val dirs = list.filter { it.isDir }.sortedWith { a, b -> naturalCompare(a.name, b.name) }
         val tracks = list.filter { it.isFlac }.sortedWith(
@@ -111,7 +129,27 @@ object AutoBrowse {
                 { Library.cachedMeta(it.url)?.track ?: Int.MAX_VALUE },
             ).thenComparator { a, b -> naturalCompare(a.name, b.name) },
         )
-        return dirs to tracks
+        return FolderListing(dirs, tracks, pickCover(list))
+    }
+
+    /**
+     * Cover als kleine JPEG-Bytes für einen Titel; lädt Tags/Cover bei Bedarf nach.
+     * Gibt null zurück, wenn der Titel kein Cover hat.
+     */
+    suspend fun coverBytesFor(trackUrl: String, maxPx: Int = ART_PX): ByteArray? {
+        var meta = Library.cachedMeta(trackUrl)
+        if (meta == null || (meta.hasCover && !Library.coverFile(trackUrl).exists())) {
+            val folderCover = try {
+                pickCover(WebDav.list(trackUrl.substringBeforeLast('/') + "/"))
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                null
+            }
+            meta = Library.loadMeta(trackUrl, folderCover)
+        }
+        if (!meta.hasCover) return null
+        return withContext(Dispatchers.IO) { Library.thumbnailBytes(trackUrl, maxPx) }
     }
 
     /** Kinder eines Browse-Knotens; null = unbekannte Id. */
@@ -123,11 +161,25 @@ object AutoBrowse {
                 if (settings.serverUrl.isNotEmpty()) add(folderItem(settings.serverUrl, "Musik"))
             }
             parentId.startsWith(DIR) -> {
-                val (dirs, tracks) = listFolder(parentId.removePrefix(DIR))
+                val listing = listFolder(parentId.removePrefix(DIR))
                 withContext(Dispatchers.IO) {
-                    dirs.map { folderItem(it.url, it.name) } +
-                        tracks.mapIndexed { i, t ->
-                            val thumb = if (i < MAX_THUMBS) Library.thumbnailBytes(t.url) else null
+                    // Für Titel ohne bekannte Tags wird nur der erste Titel gelesen (ein kurzer Header-
+                    // Abruf); sein Cover dient als Album-Cover für die übrigen Titel des Ordners.
+                    var albumThumb: ByteArray? = null
+                    val firstUncached = listing.tracks.firstOrNull { Library.cachedMeta(it.url) == null }
+                    if (firstUncached != null) {
+                        withTimeoutOrNull(8000) { Library.loadMeta(firstUncached.url, listing.coverUrl) }
+                        albumThumb = Library.thumbnailBytes(firstUncached.url, LIST_THUMB_PX)
+                    }
+                    listing.dirs.map { folderItem(it.url, it.name) } +
+                        listing.tracks.mapIndexed { i, t ->
+                            val own = Library.thumbnailBytes(t.url, LIST_THUMB_PX)
+                            val thumb = when {
+                                i >= MAX_THUMBS -> null
+                                own != null -> own
+                                Library.cachedMeta(t.url) == null -> albumThumb
+                                else -> null
+                            }
                             browseTrackItem(t, Library.cachedMeta(t.url), thumb)
                         }
                 }
@@ -138,7 +190,7 @@ object AutoBrowse {
 
     /** Warteschlange für einen Ordner (alle FLAC-Dateien darin). */
     suspend fun queueForFolder(folderUrl: String): List<MediaItem> =
-        listFolder(folderUrl).second.map { playableItem(it, Library.cachedMeta(it.url)) }
+        listFolder(folderUrl).tracks.map { playableItem(it, Library.cachedMeta(it.url)) }
 
     /** Warteschlange für einen angetippten Titel: alle FLAC-Dateien seines Ordners, Start beim Titel. */
     suspend fun queueForTrack(trackUrl: String): Pair<List<MediaItem>, Int> {
