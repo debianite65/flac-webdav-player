@@ -1,6 +1,5 @@
 package app.flacplayer.webdav
 
-import android.net.Uri
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
@@ -38,8 +37,7 @@ object QueueStore {
                     .put("id", item.mediaId)
                     .put("title", md.title?.toString().orEmpty())
                     .put("artist", md.artist?.toString().orEmpty())
-                    .put("album", md.albumTitle?.toString().orEmpty())
-                    .put("art", md.artworkUri?.toString().orEmpty()),
+                    .put("album", md.albumTitle?.toString().orEmpty()),
             )
         }
         val text = JSONObject()
@@ -72,12 +70,10 @@ object QueueStore {
             for (i in 0 until arr.length()) {
                 val o = arr.getJSONObject(i)
                 val id = o.getString("id")
-                val art = o.optString("art")
                 val metadata = MediaMetadata.Builder()
                     .setTitle(o.optString("title").ifEmpty { id.substringAfterLast('/').substringBeforeLast('.') })
                     .setArtist(o.optString("artist").ifEmpty { null })
                     .setAlbumTitle(o.optString("album").ifEmpty { null })
-                    .setArtworkUri(if (art.isNotEmpty()) Uri.parse(art) else null)
                     .build()
                 items += MediaItem.Builder().setMediaId(id).setUri(id).setMediaMetadata(metadata).build()
             }

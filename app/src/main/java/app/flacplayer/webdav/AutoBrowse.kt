@@ -1,6 +1,5 @@
 package app.flacplayer.webdav
 
-import android.net.Uri
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import kotlinx.coroutines.Dispatchers
@@ -84,11 +83,8 @@ object AutoBrowse {
 
     /** Abspielbarer Titel für die Warteschlange (mediaId = reine URL). */
     fun playableItem(entry: DavEntry, m: TrackMeta?): MediaItem {
-        val artwork = if (m?.hasCover == true && Library.coverFile(entry.url).exists()) {
-            Uri.fromFile(Library.coverFile(entry.url))
-        } else {
-            null
-        }
+        // Bewusst keine artworkUri: Android Auto kann file://-Pfade nicht lesen, bevorzugt aber eine
+        // vorhandene URI vor den Bilddaten. Das Cover kommt als artworkData (siehe enrichCurrent).
         return MediaItem.Builder()
             .setMediaId(entry.url)
             .setUri(entry.url)
@@ -97,7 +93,6 @@ object AutoBrowse {
                     .setTitle(displayTitle(entry, m))
                     .setArtist(m?.artist)
                     .setAlbumTitle(m?.album)
-                    .setArtworkUri(artwork)
                     .setIsPlayable(true)
                     .setIsBrowsable(false)
                     .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)

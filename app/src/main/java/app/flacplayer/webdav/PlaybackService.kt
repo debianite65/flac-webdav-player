@@ -123,7 +123,7 @@ class PlaybackService : MediaLibraryService() {
      */
     private fun enrichCurrent(player: Player) {
         val item = player.currentMediaItem ?: return
-        if (item.mediaMetadata.artworkData != null) return
+        if (item.mediaMetadata.artworkData != null && item.mediaMetadata.artworkUri == null) return
         val url = item.mediaId
         scope.launch {
             val bytes = try {
@@ -134,9 +134,14 @@ class PlaybackService : MediaLibraryService() {
                 null
             } ?: return@launch
             val current = player.currentMediaItem ?: return@launch
-            if (current.mediaId != url || current.mediaMetadata.artworkData != null) return@launch
+            if (current.mediaId != url ||
+                (current.mediaMetadata.artworkData != null && current.mediaMetadata.artworkUri == null)
+            ) {
+                return@launch
+            }
             val index = player.currentMediaItemIndex
             val metadata = current.mediaMetadata.buildUpon()
+                .setArtworkUri(null) // file://-Pfade kann Android Auto nicht lesen und bevorzugt sie vor den Bilddaten
                 .setArtworkData(bytes, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
                 .build()
             player.replaceMediaItem(index, current.buildUpon().setMediaMetadata(metadata).build())

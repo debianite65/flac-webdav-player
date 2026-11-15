@@ -21,7 +21,8 @@ Entscheidungen aus der Planung (13.11.2026):
 - Android Auto: `PlaybackService` ist ein `MediaLibraryService` mit Browse-Baum (`AutoBrowse.kt`):
   root → "Weiterspielen" + "Musik" (WebDAV). Browse-Ids mit Präfix `d:`/`t:`, Queue-Items haben die reine URL als
   mediaId. Manifest: `automotive_app_desc.xml` (uses media). Im Fahrzeug ungetestet.
-- Android-Auto-Cover: Auto kann file://-Pfade nicht lesen. Der aktuelle Titel bekommt sein Cover als `artworkData`
+- Android-Auto-Cover: Items haben bewusst KEINE artworkUri (Auto bevorzugt eine vorhandene URI vor den Bilddaten,
+  kann file:// aber nicht lesen -> graues Feld im "Läuft gerade"-Fenster). Nur artworkData. Auto kann file://-Pfade nicht lesen. Der aktuelle Titel bekommt sein Cover als `artworkData`
   (320 px, `PlaybackService.enrichCurrent`, lädt bei Bedarf nach, `replaceMediaItem` ohne Unterbrechung);
   Browse-Listen nutzen 128-px-Thumbnails, für ungeöffnete Ordner wird das Cover des ersten Titels für alle genommen.
 - Bewusst nicht umgesetzt: Suche, Playlists, Favoriten, Equalizer, Sleep-Timer, Chromecast,

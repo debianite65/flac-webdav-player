@@ -2,7 +2,6 @@ package app.flacplayer.webdav
 
 import android.app.Application
 import android.content.ComponentName
-import android.net.Uri
 import android.widget.Toast
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -257,16 +256,10 @@ class MainViewModel(private val app: Application) : AndroidViewModel(app) {
         entry: DavEntry,
         m: TrackMeta? = meta[entry.url] ?: Library.cachedMeta(entry.url),
     ): MediaItem {
-        val artwork = if (m?.hasCover == true && Library.coverFile(entry.url).exists()) {
-            Uri.fromFile(Library.coverFile(entry.url))
-        } else {
-            null
-        }
         val metadata = MediaMetadata.Builder()
             .setTitle(m?.title ?: entry.name.substringBeforeLast('.'))
             .setArtist(m?.artist)
             .setAlbumTitle(m?.album)
-            .setArtworkUri(artwork)
             .build()
         return MediaItem.Builder()
             .setMediaId(entry.url)
